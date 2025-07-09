@@ -86,29 +86,9 @@ class RemoteConnector:
         )
         return self.es_client
 
-    def auth_kibana(
-        self,
-        *,
-        api_key: str | None = None,
-        kibana_user: str | None = None,
-        kibana_password: str | None = None,
-        cloud_id: str | None = None,
-        kibana_url: str | None = None,
-        space: str | None = None,
-        ignore_ssl_errors: bool = False,
-        **kwargs: Any,
-    ) -> Kibana:
+    def auth_kibana(self, **options: Any) -> Kibana:
         """Return an authenticated Kibana client."""
-        self.kibana_client = get_kibana_client(
-            cloud_id=cloud_id,
-            ignore_ssl_errors=ignore_ssl_errors,
-            kibana_url=kibana_url,
-            api_key=api_key,
-            kibana_user=kibana_user,
-            kibana_password=kibana_password,
-            space=space,
-            **kwargs,
-        )
+        self.kibana_client = get_kibana_client(**options)
         return self.kibana_client
 
 
