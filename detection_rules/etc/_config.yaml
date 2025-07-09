@@ -75,5 +75,8 @@ normalize_kql_keywords: False
 
 # To prevent the tactic prefix from being added to the rule filename, set the line below to True
 # This config line can be used instead of specifying the `--no-tactic-filename` flag in the CLI
-# Mind that for unit tests, you also want to disable the filename test in the test_config.yaml
-# no_tactic_filename: True
+# Mind that for unit tests, you also want to disable the filename test in the test_config.yaml# no_tactic_filename: True
+
+# To exclude the `id` value from exception list entries when saving rules, set the line below to True
+# This mirrors the `--strip-exception-list-id` CLI flag
+# strip_exception_list_id: True

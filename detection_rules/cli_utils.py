@@ -141,6 +141,7 @@ def rule_prompt(  # noqa: PLR0912, PLR0913, PLR0915
     additional_required: list[str] | None = None,
     skip_errors: bool = False,
     strip_none_values: bool = True,
+    strip_exception_list_id: bool = RULES_CONFIG.strip_exception_list_id,
     **kwargs: Any,
 ) -> TOMLRule | str:
     """Prompt loop to build a rule."""
@@ -294,7 +295,7 @@ def rule_prompt(  # noqa: PLR0912, PLR0913, PLR0915
         raise
 
     if save:
-        rule.save_toml(strip_none_values=strip_none_values)
+        rule.save_toml(strip_none_values=strip_none_values, strip_exception_list_id=strip_exception_list_id)
 
     if skipped:
         print("Did not set the following values because they are un-required when set to the default value")

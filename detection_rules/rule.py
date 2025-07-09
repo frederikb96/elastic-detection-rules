@@ -1585,7 +1585,11 @@ class TOMLRule:
                 return rule_path.relative_to(rules_dir)
         return None
 
-    def save_toml(self, strip_none_values: bool = True) -> None:
+    def save_toml(
+        self,
+        strip_none_values: bool = True,
+        strip_exception_list_id: bool | None = None,
+    ) -> None:
         if self.path is None:
             raise ValueError(f"Can't save rule {self.name} (self.id) without a path")
 
@@ -1595,6 +1599,16 @@ class TOMLRule:
         }
         if self.contents.transform:
             converted["transform"] = self.contents.transform.to_dict()
+
+        if strip_exception_list_id is None:
+            from .config import RULES_CONFIG
+
+            strip_exception_list_id = RULES_CONFIG.strip_exception_list_id
+        if strip_exception_list_id:
+            exceptions = converted["rule"].get("exceptions_list")
+            if exceptions:
+                for exc in exceptions:
+                    exc.pop("id", None)
 
         if not self.path:
             raise ValueError("No path found")
