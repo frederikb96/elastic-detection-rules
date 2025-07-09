@@ -100,13 +100,25 @@ def upload_rule(ctx: click.Context, rules: RuleCollection, replace_id: bool) -> 
     is_flag=True,
     help="Overwrite action connectors in existing rules",
 )
+@click.option(
+    "--all-exceptions",
+    is_flag=True,
+    help="Import all exception lists in the configured directory",
+)
+@click.option(
+    "--all-action-connectors",
+    is_flag=True,
+    help="Import all action connectors in the configured directory",
+)
 @click.pass_context
-def kibana_import_rules(  # noqa: PLR0915
+def kibana_import_rules(  # noqa: PLR0915, PLR0913
     ctx: click.Context,
     rules: RuleCollection,
     overwrite: bool = False,
     overwrite_exceptions: bool = False,
     overwrite_action_connectors: bool = False,
+    all_exceptions: bool = False,
+    all_action_connectors: bool = False,
 ) -> tuple[dict[str, Any], list[RuleResource]]:
     """Import custom rules into Kibana."""
 
@@ -173,8 +185,48 @@ def kibana_import_rules(  # noqa: PLR0915
 
     kibana = ctx.obj["kibana"]
     rule_dicts = [r.contents.to_api_format() for r in rules]
+
+    def _load_rule_dependencies() -> GenericCollection:  # noqa: PLR0912
+        """Load exceptions and connectors referenced by the rules."""
+
+        if all_exceptions and all_action_connectors:
+            return GenericCollection.default()
+
+        collection = GenericCollection()
+
+        if all_exceptions and RULES_CONFIG.exception_dir:
+            collection.load_directory(RULES_CONFIG.exception_dir)
+        if all_action_connectors and RULES_CONFIG.action_connector_dir:
+            collection.load_directory(RULES_CONFIG.action_connector_dir)
+
+        exception_ids: set[str] = set()
+        action_ids: set[str] = set()
+
+        if not all_exceptions or not all_action_connectors:
+            for rule in rules:
+                if not all_exceptions:
+                    exception_ids.update(
+                        exc["list_id"] for exc in rule.contents.data.exceptions_list or []
+                    )
+                if not all_action_connectors:
+                    action_ids.update(action["id"] for action in rule.contents.data.actions or [])
+
+            if not all_exceptions and RULES_CONFIG.exception_dir:
+                for list_id in exception_ids:
+                    path = RULES_CONFIG.exception_dir / f"{list_id}_exceptions.toml"
+                    if path.exists():
+                        collection.load_file(path)
+            if not all_action_connectors and RULES_CONFIG.action_connector_dir:
+                for action_id in action_ids:
+                    path = RULES_CONFIG.action_connector_dir / f"{action_id}.toml"
+                    if path.exists():
+                        collection.load_file(path)
+
+        collection.freeze()
+        return collection
+
     with kibana:
-        cl = GenericCollection.default()
+        cl = _load_rule_dependencies()
         exception_dicts = [
             d.contents.to_api_format() for d in cl.items if isinstance(d.contents, TOMLExceptionContents)
         ]
