@@ -385,18 +385,16 @@ def get_elasticsearch_client(  # noqa: PLR0913
         return client
 
 
-def get_kibana_client(
-    *,
-    api_key: str | None = None,
-    kibana_user: str | None = None,
-    kibana_password: str | None = None,
-    cloud_id: str | None = None,
-    kibana_url: str | None = None,
-    space: str | None = None,
-    ignore_ssl_errors: bool = False,
-    **kwargs: Any,
-) -> Kibana:
-    """Get an authenticated Kibana client."""
+def get_kibana_client(**options: Any) -> Kibana:
+    """Return an authenticated Kibana client."""
+    api_key = options.pop("api_key", None)
+    kibana_user = options.pop("kibana_user", None)
+    kibana_password = options.pop("kibana_password", None)
+    cloud_id = options.pop("cloud_id", None)
+    kibana_url = options.pop("kibana_url", None)
+    space = options.pop("space", None)
+    ignore_ssl_errors = options.pop("ignore_ssl_errors", False)
+
     if not (cloud_id or kibana_url):
         raise_client_error("Missing required --cloud-id or --kibana-url")
 
@@ -409,7 +407,7 @@ def get_kibana_client(
         password=kibana_password,
         space=space,
         verify=verify,
-        **kwargs,
+        **options,
     )
 
 

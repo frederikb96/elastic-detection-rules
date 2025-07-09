@@ -175,8 +175,18 @@ def kibana_import_rules(  # noqa: PLR0915
     rule_dicts = [r.contents.to_api_format() for r in rules]
     with kibana:
         cl = GenericCollection.default()
+        used_exception_ids: set[str] = set()
+        for rule in rules:
+            for exc in (rule.contents.data.exceptions_list or []):
+                used_exception_ids.add(exc["list_id"])
+
         exception_dicts = [
-            d.contents.to_api_format() for d in cl.items if isinstance(d.contents, TOMLExceptionContents)
+            d.contents.to_api_format()
+            for d in cl.items
+            if isinstance(d.contents, TOMLExceptionContents)
+            and any(
+                ex.container.list_id in used_exception_ids for ex in d.contents.exceptions
+            )
         ]
         action_connectors_dicts = [
             d.contents.to_api_format() for d in cl.items if isinstance(d.contents, TOMLActionConnectorContents)
