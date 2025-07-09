@@ -259,6 +259,10 @@ Options:
   -e, --overwrite-exceptions      Overwrite exceptions in existing rules
   -ac, --overwrite-action-connectors
                                   Overwrite action connectors in existing rules
+  --all-exceptions                Import all exception lists found in the
+                                  exceptions directory
+  --all-action-connectors         Import all action connectors found in the
+                                  action connector directory
   -h, --help                      Show this message and exit.
 ```
 
