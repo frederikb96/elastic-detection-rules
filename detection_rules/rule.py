@@ -108,8 +108,8 @@ class DictRule:
 class RuleMeta(MarshmallowDataclassMixin):
     """Data stored in a rule's [metadata] section of TOML."""
 
-    creation_date: definitions.Date
-    updated_date: definitions.Date
+    creation_date: definitions.Date | None = None
+    updated_date: definitions.Date | None = None
     deprecation_date: definitions.Date | None = None
 
     # Optional fields
