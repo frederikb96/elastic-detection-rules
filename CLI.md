@@ -512,6 +512,7 @@ Options:
   -e, --export-exceptions         Include exceptions in export
   -s, --skip-errors               Skip errors when exporting rules
   -sv, --strip-version            Strip the version fields from all rules
+                                   (can also be set with `strip_version: True` in _config.yaml)
   -nt, --no-tactic-filename       Exclude tactic prefix in exported filenames for rules. Use same flag for import-rules to prevent warnings and disable its unit test.
   -lc, --local-creation-date      Preserve the local creation date of the rule
   -lu, --local-updated-date       Preserve the local updated date of the rule
