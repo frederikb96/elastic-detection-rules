@@ -1585,12 +1585,17 @@ class TOMLRule:
                 return rule_path.relative_to(rules_dir)
         return None
 
-    def save_toml(self, strip_none_values: bool = True) -> None:
+    def save_toml(self, strip_none_values: bool = True, strip_dates: bool = False) -> None:
         if self.path is None:
             raise ValueError(f"Can't save rule {self.name} (self.id) without a path")
 
+        metadata = self.contents.metadata.to_dict()
+        if strip_dates:
+            metadata.pop("creation_date", None)
+            metadata.pop("updated_date", None)
+
         converted = {
-            "metadata": self.contents.metadata.to_dict(),
+            "metadata": metadata,
             "rule": self.contents.data.to_dict(strip_none_values=strip_none_values),
         }
         if self.contents.transform:
