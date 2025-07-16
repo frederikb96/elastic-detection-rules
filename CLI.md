@@ -104,6 +104,7 @@ Options:
   -ske, --skip-errors             Skip rule import errors
   -da, --default-author TEXT      Default author for rules missing one
   -snv, --strip-none-values       Strip None values from the rule
+  -sd, --strip-dates              Strip creation and updated date fields from imported rules
   -lc, --local-creation-date      Preserve the local creation date of the rule
   -lu, --local-updated-date       Preserve the local updated date of the rule
   -h, --help                      Show this message and exit.
