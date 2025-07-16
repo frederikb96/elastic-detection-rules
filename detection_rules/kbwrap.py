@@ -374,6 +374,9 @@ def kibana_export_rules(  # noqa: PLR0912, PLR0913, PLR0915
                     save_path, {"creation_date": local_creation_date, "updated_date": local_updated_date}
                 )
             )
+            if strip_dates or RULES_CONFIG.strip_dates:
+                params["creation_date"] = None
+                params["updated_date"] = None
             contents = TOMLRuleContents.from_rule_resource(**params)  # type: ignore[reportArgumentType]
             rule = TOMLRule(contents=contents, path=save_path)
         except Exception as e:
@@ -443,7 +446,7 @@ def kibana_export_rules(  # noqa: PLR0912, PLR0913, PLR0915
     saved: list[TOMLRule] = []
     for rule in exported:
         try:
-            rule.save_toml(strip_dates=strip_dates or RULES_CONFIG.strip_dates)
+            rule.save_toml()
         except Exception as e:
             if skip_errors:
                 print(f"- skipping {rule.contents.data.name} - {type(e).__name__}")
