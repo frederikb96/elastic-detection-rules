@@ -111,16 +111,34 @@ def upload_rule(ctx: click.Context, rules: RuleCollection, replace_id: bool) -> 
     is_flag=True,
     help="Overwrite value lists referenced in exceptions",
 )
+@click.option(
+    "--rule-name",
+    "-rn",
+    multiple=True,
+    required=False,
+    help=(
+        "Optional rule name to restrict import to (case-insensitive, supports wildcards). "
+        "May be specified multiple times."
+    ),
+)
 @click.pass_context
 def kibana_import_rules(  # noqa: PLR0912, PLR0913, PLR0915
     ctx: click.Context,
     rules: RuleCollection,
+    rule_name: list[str] | None = None,
     overwrite: bool = False,
     overwrite_exceptions: bool = False,
     overwrite_action_connectors: bool = False,
     overwrite_value_lists: bool = False,
 ) -> tuple[dict[str, Any], list[RuleResource]]:
     """Import custom rules into Kibana."""
+
+    if rule_name:
+        if ctx.params.get("rule_id"):
+            raise click.UsageError("Cannot use --rule-id and --rule-name together. Please choose one.")
+        rules = rules.filter_by_name(rule_name)
+        if len(rules) == 0:
+            raise click.UsageError("No rules match the provided --rule-name pattern(s).")
 
     def _handle_response_errors(response: dict[str, Any]) -> None:
         """Handle errors from the import response."""

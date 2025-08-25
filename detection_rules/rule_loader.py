@@ -5,9 +5,11 @@
 
 """Load rule metadata transform between rule and api formats."""
 
+import fnmatch
 import json
+import re
 from collections import OrderedDict
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from multiprocessing.pool import ThreadPool
 from pathlib import Path
@@ -400,6 +402,15 @@ class RuleCollection(BaseCollection[TOMLRule]):
             filtered_collection.add_rule(rule)
 
         return filtered_collection
+
+    def filter_by_name(self, patterns: Sequence[str]) -> "RuleCollection":
+        """Retrieve rules whose name matches any of the glob ``patterns``.
+
+        Matching is case-insensitive and supports standard shell wildcards
+        (``*`` and ``?``)."""
+
+        compiled = [re.compile(fnmatch.translate(pat), re.IGNORECASE) for pat in patterns]
+        return self.filter(lambda r: any(rx.match(r.contents.data.name) for rx in compiled))
 
     @staticmethod
     def deserialize_toml_string(contents: bytes | str) -> dict[str, Any]:

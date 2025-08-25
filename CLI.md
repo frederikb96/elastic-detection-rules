@@ -232,7 +232,8 @@ Running the following command will print out a table showing any alerts that hav
 ### Using `kibana import-rules`
 
 To directly load Toml formatted rule files into Kibana, one can use the `kibana import-rules` command as shown below. If the
-`-d/--directory` option is omitted, the first path listed in the `rule_dirs` array of `_config.yaml` is used.
+`-d/--directory` option is omitted, the first path listed in the `rule_dirs` array of `_config.yaml` is used. Use `--rule-name`
+(`-rn`) to import only rules whose names match a pattern; wildcards are supported and the flag may be specified multiple times.
 
 ```
 python -m detection_rules kibana import-rules -h
@@ -259,6 +260,7 @@ Options:
   -f, --rule-file FILE
   -d, --directory DIRECTORY       Recursively load rules from a directory
   -id, --rule-id TEXT
+  -rn, --rule-name TEXT           Optional rule name to restrict import to (case-insensitive, supports wildcards). May be specified multiple times.
   -nt, --no-tactic-filename       Allow rule filenames without tactic prefix. Use this if rules have been exported with this flag.
   -o, --overwrite                 Overwrite existing rules
   -e, --overwrite-exceptions      Overwrite exceptions in existing rules
