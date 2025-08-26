@@ -259,10 +259,14 @@ Options:
   -d, --directory DIRECTORY       Recursively load rules from a directory
   -id, --rule-id TEXT
   -nt, --no-tactic-filename       Allow rule filenames without tactic prefix. Use this if rules have been exported with this flag.
-  -o, --overwrite                 Overwrite existing rules
-  -e, --overwrite-exceptions      Overwrite exceptions in existing rules
+  -o, --overwrite                 Overwrite existing rules (otherwise they are skipped)
+  -e, --overwrite-exceptions      Overwrite existing exception lists instead of skipping them
   -ac, --overwrite-action-connectors
                                   Overwrite action connectors in existing rules
+  -vl, --overwrite-value-lists    Overwrite value lists referenced in exceptions
+  -tt, --overwrite-timeline-templates
+                                  Overwrite timeline templates referenced in rules
+  -ee, --exclude-exceptions TEXT  Exception list names to exclude (supports wildcards)
   -h, --help                      Show this message and exit.
 ```
 
@@ -507,6 +511,8 @@ Options:
   -ed, --exceptions-directory PATH
                                   Directory to export exceptions to
   -vld, --value-list-directory PATH  Directory to export value lists to
+  -ttd, --timeline-templates-directory PATH
+                                   Directory to export timeline templates to
   -da, --default-author TEXT      Default author for rules missing one
   -r, --rule-id TEXT              Optional Rule IDs to restrict export to
   -rn, --rule-name TEXT           Optional Rule name to restrict export to (KQL, case-insensitive, supports wildcards). May be specified multiple times.
@@ -514,6 +520,8 @@ Options:
                                   Include action connectors in export
   -e, --export-exceptions         Include exceptions in export
   -vl, --export-value-lists       Include value lists referenced in exceptions
+  -tt, --export-timeline-templates
+                                   Include timeline templates referenced in rules
   -s, --skip-errors               Skip errors when exporting rules
   -sv, --strip-version            Strip the version fields from all rules
   -sd, --strip-dates              Strip creation and updated date fields from exported rules

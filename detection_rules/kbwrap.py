@@ -5,6 +5,8 @@
 
 """Kibana cli commands."""
 
+import fnmatch
+import json
 import re
 import sys
 from pathlib import Path
@@ -12,7 +14,13 @@ from typing import Any
 
 import click
 import kql  # type: ignore[reportMissingTypeStubs]
-from kibana import RuleResource, Signal, ValueListResource  # type: ignore[reportMissingTypeStubs]
+from kibana import (
+    ExceptionListResource,
+    RuleResource,
+    Signal,
+    TimelineTemplateResource,
+    ValueListResource,
+)  # type: ignore[reportMissingTypeStubs]
 
 from .action_connector import (
     TOMLActionConnector,
@@ -97,21 +105,52 @@ def upload_rule(ctx: click.Context, rules: RuleCollection, replace_id: bool) -> 
 
 @kibana_group.command("import-rules")
 @multi_collection
-@click.option("--overwrite", "-o", is_flag=True, help="Overwrite existing rules")
-@click.option("--overwrite-exceptions", "-e", is_flag=True, help="Overwrite exceptions in existing rules")
+@click.option(
+    "--overwrite",
+    "-o",
+    is_flag=True,
+    help="Overwrite existing rules (otherwise they are skipped)",
+)
+@click.option(
+    "--overwrite-exceptions",
+    "-e",
+    is_flag=True,
+    help="Overwrite existing exception lists (otherwise they are skipped)",
+)
 @click.option(
     "--overwrite-action-connectors",
     "-ac",
     is_flag=True,
     help="Overwrite action connectors in existing rules",
 )
+@click.option(
+    "--overwrite-value-lists",
+    "-vl",
+    is_flag=True,
+    help="Overwrite value lists referenced in exceptions",
+)
+@click.option(
+    "--overwrite-timeline-templates",
+    "-tt",
+    is_flag=True,
+    help="Overwrite timeline templates referenced in rules",
+)
+@click.option(
+    "--exclude-exceptions",
+    "-ee",
+    multiple=True,
+    help="Exclude exception lists by name (supports wildcards)",
+)
 @click.pass_context
-def kibana_import_rules(  # noqa: PLR0915
+def kibana_import_rules(  # noqa: PLR0912, PLR0913, PLR0915
     ctx: click.Context,
     rules: RuleCollection,
     overwrite: bool = False,
     overwrite_exceptions: bool = False,
     overwrite_action_connectors: bool = False,
+    overwrite_value_lists: bool = False,
+    overwrite_timeline_templates: bool = False,
+    exclude_exceptions: tuple[str, ...] = (),
 ) -> tuple[dict[str, Any], list[RuleResource]]:
     """Import custom rules into Kibana."""
 
@@ -181,28 +220,148 @@ def kibana_import_rules(  # noqa: PLR0915
             click.echo(f" - {ids_str}")
 
     kibana = ctx.obj["kibana"]
-    rule_dicts = [r.contents.to_api_format() for r in rules]
-    rule_ids = {rule["rule_id"] for rule in rule_dicts}
+    skipped_rules: list[str] = []
     with kibana:
+        rule_dicts: list[dict[str, Any]] = []
+        for r in rules:
+            api_rule = r.contents.to_api_format()
+            # avoid API conflicts by skipping rules that already exist when
+            # --overwrite isn't supplied
+            if not overwrite and RuleResource.get(api_rule["rule_id"]):
+                skipped_rules.append(api_rule["rule_id"])
+                continue
+            rule_dicts.append(api_rule)
+
+        rule_ids = {rule["rule_id"] for rule in rule_dicts}
+        timeline_ids = {r.get("timeline_id") for r in rule_dicts if r.get("timeline_id")}
         cl = GenericCollection.default()
-        exception_dicts = [
-            d.contents.to_api_format()
-            for d in cl.items
-            if isinstance(d.contents, TOMLExceptionContents) and _matches_rule_ids(d, rule_ids)
-        ]
-        action_connectors_dicts = [
-            d.contents.to_api_format()
-            for d in cl.items
-            if isinstance(d.contents, TOMLActionConnectorContents) and _matches_rule_ids(d, rule_ids)
-        ]
-        response, successful_rule_ids, results = RuleResource.import_rules(  # type: ignore[reportUnknownMemberType]
-            rule_dicts,
-            exception_dicts,
-            action_connectors_dicts,
-            overwrite=overwrite,
-            overwrite_exceptions=overwrite_exceptions,
-            overwrite_action_connectors=overwrite_action_connectors,
-        )
+        exception_list_map: dict[str, list[dict[str, Any]]] = {}
+        action_connectors_dicts: list[list[dict[str, Any]]] = []
+        value_list_map: dict[str, str] = {}
+        exclusion_regexes = [re.compile(fnmatch.translate(pat), re.IGNORECASE) for pat in exclude_exceptions]
+
+        def _is_excluded(name: str) -> bool:
+            return any(rx.match(name) for rx in exclusion_regexes)
+
+        # helper to gather all referenced value list IDs from exception entries
+        def _collect_list_ids(entries: list[dict[str, Any]]) -> None:
+            for entry in entries:
+                if entry.get("type") == "list" and entry.get("list"):
+                    value_list_map[entry["list"]["id"]] = entry["list"].get("type", "keyword")
+                elif entry.get("type") == "nested":
+                    # recurse into nested entries to find any further value list references
+                    _collect_list_ids(entry.get("entries", []))
+
+        # iterate over collection items and separate exception lists/action connectors
+        excluded_exception_lists: list[str] = []
+        excluded_list_ids: set[str] = set()
+        for d in cl.items:
+            if isinstance(d.contents, TOMLExceptionContents) and _matches_rule_ids(d, rule_ids):
+                name = d.contents.metadata.list_name
+                edicts = d.contents.to_api_format()
+                list_id = edicts[0]["list_id"]
+                if _is_excluded(name):
+                    excluded_exception_lists.append(name)
+                    excluded_list_ids.add(list_id)
+                    continue
+                exception_list_map[list_id] = edicts
+            elif isinstance(d.contents, TOMLActionConnectorContents) and _matches_rule_ids(d, rule_ids):
+                action_connectors_dicts.append(d.contents.to_api_format())
+
+        if excluded_list_ids:
+            for rd in rule_dicts:
+                if "exceptions_list" in rd:
+                    rd["exceptions_list"] = [
+                        e for e in rd["exceptions_list"] if e.get("list_id") not in excluded_list_ids
+                    ]
+
+        exception_dicts: list[list[dict[str, Any]]] = []
+        skipped_exception_lists: list[str] = []
+
+        for list_id, edicts in exception_list_map.items():
+            existing = ExceptionListResource.get(list_id)
+            # decide whether to skip or overwrite existing exception lists
+            if existing and not overwrite_exceptions:
+                skipped_exception_lists.append(list_id)
+                continue
+            if existing and overwrite_exceptions:
+                # delete to ensure the list matches the imported contents exactly
+                ExceptionListResource.delete(list_id)
+            for item in edicts:
+                # collect value list IDs from each exception item for later processing
+                _collect_list_ids(item.get("entries", []))
+            exception_dicts.append(edicts)
+
+        # begin handling value lists referenced by the exceptions above
+        imported_value_lists: list[str] = []
+        skipped_value_lists: list[str] = []
+        missing_value_lists: list[str] = []
+        value_list_dir = RULES_CONFIG.value_list_dir
+        if value_list_map:
+            # the value list APIs expect an index to exist, so ensure it's created once
+            ValueListResource.create_index()
+        for list_id, list_type in value_list_map.items():
+            file_path = value_list_dir / list_id if value_list_dir else None
+            if not file_path or not file_path.exists():
+                missing_value_lists.append(list_id)
+                continue
+            text = file_path.read_text()
+            existing = ValueListResource.get(list_id)
+            if existing and not overwrite_value_lists:
+                # skip existing lists unless --overwrite-value-lists is provided
+                skipped_value_lists.append(list_id)
+                continue
+            if existing and overwrite_value_lists:
+                # deleting avoids duplicate items when re-importing
+                ValueListResource.delete(list_id)
+            if not existing or overwrite_value_lists:
+                # /items/_import only uploads items and does not create the list itself
+                ValueListResource.create(list_id, list_type)
+            # now populate the value list with its newline-delimited contents
+            ValueListResource.import_list_items(list_id, text, list_type)
+            imported_value_lists.append(list_id)
+
+        # begin handling timeline templates referenced by rules
+        imported_timeline_templates: list[str] = []
+        skipped_timeline_templates: list[str] = []
+        missing_timeline_templates: list[str] = []
+        timeline_dir = RULES_CONFIG.timeline_template_dir
+        for t_id in sorted(timeline_ids):
+            file_path = timeline_dir / f"{t_id}.json" if timeline_dir else None
+            if not file_path or not file_path.exists():
+                missing_timeline_templates.append(t_id)
+                continue
+            text = file_path.read_text()
+            try:
+                template_obj = json.loads(text.splitlines()[0])
+            except json.JSONDecodeError:
+                missing_timeline_templates.append(t_id)
+                continue
+            # the import API expects version and date fields to exist
+            template_obj.setdefault("version", "1")
+            template_obj.setdefault("created", 0)
+            template_obj.setdefault("updated", template_obj["created"])
+            text = json.dumps(template_obj) + "\n"
+            existing = TimelineTemplateResource.get(t_id)
+            if existing and not overwrite_timeline_templates:
+                skipped_timeline_templates.append(t_id)
+                continue
+            if existing and overwrite_timeline_templates:
+                TimelineTemplateResource.delete(t_id)
+            TimelineTemplateResource.import_template(text)
+            imported_timeline_templates.append(t_id)
+
+        if rule_dicts:
+            response, successful_rule_ids, results = RuleResource.import_rules(  # type: ignore[reportUnknownMemberType]
+                rule_dicts,
+                exception_dicts,
+                action_connectors_dicts,
+                overwrite=overwrite,
+                overwrite_exceptions=overwrite_exceptions,
+                overwrite_action_connectors=overwrite_action_connectors,
+            )
+        else:
+            response, successful_rule_ids, results = {"errors": []}, [], []
 
     if successful_rule_ids:
         click.echo(f"{len(successful_rule_ids)} rule(s) successfully imported")  # type: ignore[reportUnknownArgumentType]
@@ -213,6 +372,42 @@ def kibana_import_rules(  # noqa: PLR0915
     else:
         _process_imported_items(exception_dicts, "exception list(s)", "list_id")
         _process_imported_items(action_connectors_dicts, "action connector(s)", "id")
+        if skipped_rules:
+            click.echo("Rules already exist and were not overwritten:")
+            ids_str = "\n - ".join(skipped_rules)
+            click.echo(f" - {ids_str}")
+        if excluded_exception_lists:
+            click.echo("Exception lists excluded from import:")
+            ids_str = "\n - ".join(excluded_exception_lists)
+            click.echo(f" - {ids_str}")
+        if skipped_exception_lists:
+            click.echo("Exception lists already exist and were not overwritten:")
+            ids_str = "\n - ".join(skipped_exception_lists)
+            click.echo(f" - {ids_str}")
+        if imported_value_lists:
+            click.echo(f"{len(imported_value_lists)} value list(s) successfully imported")
+            ids_str = "\n - ".join(imported_value_lists)
+            click.echo(f" - {ids_str}")
+        if skipped_value_lists:
+            click.echo("Value lists already exist and were not overwritten:")
+            ids_str = "\n - ".join(skipped_value_lists)
+            click.echo(f" - {ids_str}")
+        if missing_value_lists:
+            click.echo("Value list files not found:")
+            ids_str = "\n - ".join(missing_value_lists)
+            click.echo(f" - {ids_str}")
+        if imported_timeline_templates:
+            click.echo(f"{len(imported_timeline_templates)} timeline template(s) successfully imported")
+            ids_str = "\n - ".join(imported_timeline_templates)
+            click.echo(f" - {ids_str}")
+        if skipped_timeline_templates:
+            click.echo("Timeline templates already exist and were not overwritten:")
+            ids_str = "\n - ".join(skipped_timeline_templates)
+            click.echo(f" - {ids_str}")
+        if missing_timeline_templates:
+            click.echo("Timeline template files not found:")
+            ids_str = "\n - ".join(missing_timeline_templates)
+            click.echo(f" - {ids_str}")
 
     return response, results  # type: ignore[reportUnknownVariableType]
 
@@ -224,6 +419,13 @@ def kibana_import_rules(  # noqa: PLR0915
 )
 @click.option("--exceptions-directory", "-ed", required=False, type=Path, help="Directory to export exceptions to")
 @click.option("--value-list-directory", "-vld", required=False, type=Path, help="Directory to export value lists to")
+@click.option(
+    "--timeline-templates-directory",
+    "-ttd",
+    required=False,
+    type=Path,
+    help="Directory to export timeline templates to",
+)
 @click.option("--default-author", "-da", type=str, required=False, help="Default author for rules missing one")
 @click.option("--rule-id", "-r", multiple=True, help="Optional Rule IDs to restrict export to")
 @click.option(
@@ -239,6 +441,12 @@ def kibana_import_rules(  # noqa: PLR0915
 @click.option("--export-action-connectors", "-ac", is_flag=True, help="Include action connectors in export")
 @click.option("--export-exceptions", "-e", is_flag=True, help="Include exceptions in export")
 @click.option("--export-value-lists", "-vl", is_flag=True, help="Include value lists referenced in exceptions")
+@click.option(
+    "--export-timeline-templates",
+    "-tt",
+    is_flag=True,
+    help="Include timeline templates referenced in rules",
+)
 @click.option("--skip-errors", "-s", is_flag=True, help="Skip errors when exporting rules")
 @click.option("--strip-version", "-sv", is_flag=True, help="Strip the version fields from all rules")
 @click.option("--strip-dates", "-sd", is_flag=True, help="Strip creation and updated date fields from exported rules")
@@ -270,12 +478,14 @@ def kibana_export_rules(  # noqa: PLR0912, PLR0913, PLR0915
     action_connectors_directory: Path | None,
     exceptions_directory: Path | None,
     value_list_directory: Path | None,
+    timeline_templates_directory: Path | None,
     default_author: str,
     rule_id: list[str] | None = None,
     rule_name: list[str] | None = None,
     export_action_connectors: bool = False,
     export_exceptions: bool = False,
     export_value_lists: bool = False,
+    export_timeline_templates: bool = False,
     skip_errors: bool = False,
     strip_version: bool = False,
     strip_dates: bool = False,
@@ -342,6 +552,13 @@ def kibana_export_rules(  # noqa: PLR0912, PLR0913, PLR0915
     if not value_list_directory and export_value_lists:
         click.echo("Warning: Value list export requested, but no Value list directory found")
 
+    # Handle Timeline Template Directory Location
+    if results and timeline_templates_directory:
+        timeline_templates_directory.mkdir(parents=True, exist_ok=True)
+    timeline_templates_directory = timeline_templates_directory or RULES_CONFIG.timeline_template_dir
+    if not timeline_templates_directory and export_timeline_templates:
+        click.echo("Warning: Timeline template export requested, but no Timeline template directory found")
+
     if results:
         directory.mkdir(parents=True, exist_ok=True)
     else:
@@ -371,6 +588,7 @@ def kibana_export_rules(  # noqa: PLR0912, PLR0913, PLR0915
     exception_list_rule_table: dict[str, list[dict[str, Any]]] = {}
     action_connector_rule_table: dict[str, list[dict[str, Any]]] = {}
     value_list_ids: set[str] = set()  # value lists referenced across all exceptions
+    timeline_ids: set[str] = set()  # timeline templates referenced by rules
     for rule_resource in rules_results:  # type: ignore[reportUnknownVariableType]
         try:
             if strip_version:
@@ -426,6 +644,13 @@ def kibana_export_rules(  # noqa: PLR0912, PLR0913, PLR0915
                 if action_id not in action_connector_rule_table:
                     action_connector_rule_table[action_id] = []
                 action_connector_rule_table[action_id].append({"id": rule.id, "name": rule.name})
+
+        if export_timeline_templates:
+            # Collect timeline IDs in this initial pass, alongside exception and action connector data,
+            # so we only walk the rules once before exporting templates later.
+            t_id = rule.contents.data.timeline_id  # type: ignore[reportUnknownMemberType]
+            if t_id:
+                timeline_ids.add(t_id)
 
         exported.append(rule)
 
@@ -532,6 +757,44 @@ def kibana_export_rules(  # noqa: PLR0912, PLR0913, PLR0915
                         continue
                     raise
 
+    timeline_template_exported: list[str] = []
+    saved_timeline_templates: list[str] = []
+    if export_timeline_templates and timeline_ids:
+        with kibana:
+            for t_id in sorted(timeline_ids):
+                try:
+                    text = TimelineTemplateResource.export_template(t_id)
+
+                    # Optionally strip version and date fields from the exported JSON
+                    if strip_version or strip_dates:
+                        lines = text.splitlines()
+                        if lines:
+                            try:
+                                template_obj = json.loads(lines[0])
+                            except json.JSONDecodeError:
+                                pass
+                            else:
+                                if strip_version:
+                                    template_obj.pop("version", None)
+                                if strip_dates:
+                                    template_obj.pop("created", None)
+                                    template_obj.pop("updated", None)
+                                lines[0] = json.dumps(template_obj)
+                                text = "\n".join(lines)
+                                if text and not text.endswith("\n"):
+                                    text += "\n"
+
+                    timeline_template_exported.append(t_id)
+                    if timeline_templates_directory:
+                        (timeline_templates_directory / f"{t_id}.json").write_text(text)
+                        saved_timeline_templates.append(t_id)
+                except Exception as e:
+                    if skip_errors:
+                        print(f"- skipping timeline template {t_id} - {type(e).__name__}")
+                        errors.append(f"- {t_id} - {e}")
+                        continue
+                    raise
+
     saved_action_connectors: list[TOMLActionConnector] = []
     for action in action_connectors:
         try:
@@ -550,10 +813,12 @@ def kibana_export_rules(  # noqa: PLR0912, PLR0913, PLR0915
     click.echo(f"{len(exceptions)} exceptions exported")
     click.echo(f"{len(action_connectors)} action connectors exported")
     click.echo(f"{len(value_list_exported)} value lists exported")
+    click.echo(f"{len(timeline_template_exported)} timeline templates exported")
     click.echo(f"{len(saved)} rules saved to {directory}")
     click.echo(f"{len(saved_exceptions)} exception lists saved to {exceptions_directory}")
     click.echo(f"{len(saved_action_connectors)} action connectors saved to {action_connectors_directory}")
     click.echo(f"{len(saved_value_lists)} value lists saved to {value_list_directory}")
+    click.echo(f"{len(saved_timeline_templates)} timeline templates saved to {timeline_templates_directory}")
     if errors:
         err_file = directory / "_errors.txt"
         _ = err_file.write_text("\n".join(errors))

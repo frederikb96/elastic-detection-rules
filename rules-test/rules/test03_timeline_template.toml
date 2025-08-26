@@ -1,0 +1,36 @@
+[metadata]
+creation_date = "2025/08/24"
+integration = []
+maturity = "development"
+updated_date = "2025/08/24"
+
+[rule]
+actions = []
+author = ["SOC"]
+description = "Test rule that references a timeline template"
+enabled = false
+false_positives = []
+from = "now-540s"
+interval = "5m"
+language = "kuery"
+license = ""
+max_signals = 100
+index = ["logs-*"]
+name = "Test03 - Timeline Template"
+references = []
+related_integrations = []
+required_fields = []
+risk_score = 50
+risk_score_mapping = []
+rule_id = "11111111-2222-3333-4444-555555555555"
+setup = ""
+severity = "medium"
+severity_mapping = []
+tags = []
+to = "now"
+type = "query"
+
+query = 'host.name:*'
+
+timeline_id = "9f042e4d-9833-42ce-b90d-0da6a7181709"
+timeline_title = "testtemplate"
