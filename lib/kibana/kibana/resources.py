@@ -106,6 +106,22 @@ class ResourceIterator(object):
 class RuleResource(BaseResource):
     BASE_URI = "/api/detection_engine/rules"
 
+    @classmethod
+    def get(cls, rule_id: str) -> dict | None:
+        """Retrieve a rule by ``rule_id``.
+
+        The API returns a JSON body with ``status_code: 404`` when the rule is
+        missing, even when HTTP errors are suppressed. Return ``None`` in that
+        case so callers can treat the rule as nonexistent.
+        """
+        response = Kibana.current().get(cls.BASE_URI, params={"rule_id": rule_id}, error=False)
+        if not response:
+            return None
+        status_code = response.get("status_code") or response.get("statusCode")
+        if status_code == 404:
+            return None
+        return response
+
     @staticmethod
     def _add_internal_filter(is_internal: bool, params: dict) -> dict:
         custom_filter = f'alert.attributes.tags:"__internal_immutable:{str(is_internal).lower()}"'
@@ -279,10 +295,97 @@ class RuleResource(BaseResource):
         return [cls(r) for r in data]
 
 
+class ExceptionListResource(BaseResource):
+    """Resource for managing exception lists."""
+
+    BASE_URI = "/api/exception_lists"
+
+    @classmethod
+    def get(cls, list_id: str, namespace_type: str = "single") -> dict | None:
+        """Retrieve an exception list by ``list_id``.
+
+        The API returns ``status_code: 404`` in the body when a list is
+        missing, so return ``None`` to make existence checks straightforward.
+        """
+        params = {"list_id": list_id, "namespace_type": namespace_type}
+        response = Kibana.current().get(cls.BASE_URI, params=params, error=False)
+        if not response:
+            return None
+        status_code = response.get("status_code") or response.get("statusCode")
+        if status_code == 404:
+            return None
+        return response
+
+    @classmethod
+    def delete(cls, list_id: str, namespace_type: str = "single") -> None:
+        """Delete an exception list."""
+        params = {"list_id": list_id, "namespace_type": namespace_type}
+        Kibana.current().delete(cls.BASE_URI, params=params, error=False)
+
+
 class ValueListResource(BaseResource):
     """Resource for interacting with value list items."""
 
     BASE_URI = "/api/lists"
+
+    @classmethod
+    def get(cls, list_id: str) -> dict | None:
+        """Retrieve a value list by ID.
+
+        The API returns a JSON body with ``status_code: 404`` when the list is
+        missing, even though ``error=False`` suppresses HTTP errors. In that
+        case return ``None`` so callers can treat the list as nonexistent.
+        """
+        response = Kibana.current().get(cls.BASE_URI, params={"id": list_id}, error=False)
+        if not response:
+            return None
+        status_code = response.get("status_code") or response.get("statusCode")
+        if status_code == 404:
+            return None
+        return response
+
+    @classmethod
+    def delete(cls, list_id: str) -> None:
+        """Delete a value list by ID."""
+        Kibana.current().delete(cls.BASE_URI, params={"id": list_id}, error=False)
+
+    @classmethod
+    def create_index(cls) -> None:
+        """Ensure the value list index exists."""
+        Kibana.current().post(f"{cls.BASE_URI}/index", error=False)
+
+    @classmethod
+    def create(cls, list_id: str, list_type: str, name: str | None = None, description: str | None = None) -> dict:
+        """Create a value list."""
+        payload = {
+            "id": list_id,
+            "type": list_type,
+            "name": name or list_id,
+            "description": description or name or list_id,
+        }
+        return Kibana.current().post(cls.BASE_URI, data=payload)
+
+    @classmethod
+    def import_list_items(cls, list_id: str, text: str, list_type: str) -> dict:
+        """Import newline-delimited items into an existing value list.
+
+        The `/api/lists/items/_import` endpoint only adds items to a list that
+        already exists and will not implicitly create the list. Callers must
+        ensure the value list (and its backing index) are created before
+        invoking this helper.
+        """
+        boundary = "----ElasticBoundary"
+        body = (
+            f"--{boundary}\r\n"
+            f"Content-Disposition: form-data; name=\"file\"; filename=\"{list_id}\"\r\n"
+            "Content-Type: text/plain\r\n\r\n"
+            f"{text}\r\n--{boundary}--\r\n"
+        ).encode("utf-8")
+        headers = {"content-type": f"multipart/form-data; boundary={boundary}"}
+        params = {"list_id": list_id, "type": list_type}
+        return Kibana.current().post(
+            f"{cls.BASE_URI}/items/_import", params=params, raw_data=body, headers=headers
+        )
 
     @classmethod
     def export_list_items(cls, list_id: str) -> str:
@@ -290,6 +393,122 @@ class ValueListResource(BaseResource):
         response = Kibana.current().post(
             f"{cls.BASE_URI}/items/_export", params={"list_id": list_id}, raw=True
         )
+        return response.text
+
+
+class TimelineTemplateResource(BaseResource):
+    """Resource for interacting with timeline templates."""
+
+    BASE_URI = "/api/timeline"
+
+    @classmethod
+    def get(cls, timeline_id: str) -> dict | None:
+        """Retrieve a timeline template by its ``templateTimelineId``.
+
+        The API responds with an HTTP 404 and a JSON body containing
+        ``{"message": "Could not find timeline", "status_code": 404}`` when
+        the template is missing. Return ``None`` in that case so callers can
+        treat the template as nonexistent.
+        """
+
+        response = Kibana.current().get(
+            cls.BASE_URI, params={"template_timeline_id": timeline_id}, error=False
+        )
+        if not response:
+            return None
+        status_code = response.get("status_code") or response.get("statusCode")
+        if status_code == 404:
+            return None
+        return response
+
+    @classmethod
+    def delete(cls, timeline_id: str) -> None:
+        """Delete a timeline template by its ``templateTimelineId``."""
+
+        try:
+            saved_id = cls.resolve_saved_object_id(timeline_id)
+        except RuntimeError:
+            return
+        Kibana.current().delete(cls.BASE_URI, data={"savedObjectIds": [saved_id]})
+
+    @classmethod
+    def resolve_saved_object_id(cls, timeline_id: str) -> str:
+        """Resolve a timeline's ``templateTimelineId`` to its saved object ID."""
+
+        kibana = Kibana.current()
+        resolved = kibana.get(
+            f"{cls.BASE_URI}/resolve",
+            params={"template_timeline_id": timeline_id},
+            error=False,
+        )
+        if isinstance(resolved, dict) and resolved.get("status_code"):
+            raise RuntimeError(
+                resolved.get("message", f"timeline {timeline_id} not found")
+            )
+
+        saved_id = resolved.get("timeline", {}).get("savedObjectId")
+        if not saved_id:
+            raise RuntimeError(f"timeline {timeline_id} not found")
+
+        return saved_id
+
+    @classmethod
+    def import_template(cls, text: str, is_immutable: bool = False) -> dict:
+        """Import a timeline template from raw NDJSON ``text``."""
+
+        boundary = "----ElasticBoundary"
+        body = (
+            f"--{boundary}\r\n"
+            f"Content-Disposition: form-data; name=\"file\"; filename=\"timeline.ndjson\"\r\n"
+            "Content-Type: application/json\r\n\r\n"
+            f"{text}\r\n--{boundary}--\r\n"
+        ).encode("utf-8")
+        headers = {"content-type": f"multipart/form-data; boundary={boundary}"}
+        params = {"isImmutable": str(is_immutable).lower()}
+        return Kibana.current().post(
+            f"{cls.BASE_URI}/_import", params=params, raw_data=body, headers=headers
+        )
+
+    @classmethod
+    def export_template(cls, timeline_id: str) -> str:
+        """Export a timeline template referenced by ``timeline_id``.
+
+        The ``timeline_id`` stored on rules corresponds to the template's
+        ``templateTimelineId`` rather than the saved object ID required by the
+        export API.  The saved object ID is retrieved via
+        :meth:`resolve_saved_object_id` before calling the export endpoint.
+
+        An error is raised if the export API returns an unexpected status code or
+        if the response payload contains a ``statusCode`` field (which Kibana uses
+        to report errors while still responding with HTTP 200).
+        """
+
+        kibana = Kibana.current()
+        saved_id = cls.resolve_saved_object_id(timeline_id)
+
+        # Export the timeline template using the saved object ID
+        response = kibana.post(
+            f"{cls.BASE_URI}/_export",
+            params={"file_name": timeline_id},
+            data={"ids": [saved_id]},
+            raw=True,
+            error=False,
+        )
+        if response.status_code != 200:
+            raise RuntimeError(
+                response.text
+                or f"unexpected status {response.status_code} for timeline {timeline_id}"
+            )
+
+        first_line = response.text.splitlines()[0] if response.text else ""
+        try:
+            payload = json.loads(first_line)
+        except json.JSONDecodeError:
+            payload = None
+
+        if isinstance(payload, dict) and payload.get("statusCode"):
+            raise RuntimeError(response.text)
+
         return response.text
 
 

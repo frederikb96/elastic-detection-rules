@@ -49,9 +49,10 @@ Options:
   -d, --directory DIRECTORY       Recursively load rules from a directory
   -id, --rule-id TEXT
   -nt, --no-tactic-filename       Allow rule filenames without tactic prefix. Use this if rules have been exported with this flag.
-  -o, --overwrite                 Overwrite existing rules
-  -e, --overwrite-exceptions      Overwrite exceptions in existing rules
+  -o, --overwrite                 Overwrite existing rules (otherwise they are skipped)
+  -e, --overwrite-exceptions      Overwrite existing exception lists instead of skipping them
   -ac, --overwrite-action-connectors  Overwrite action connectors in existing rules
+  -vl, --overwrite-value-lists    Overwrite value lists referenced in exceptions
 ```
 
 An example from the same documentation demonstrates Kibana returning a `409` conflict when the `rule_id` already exists:

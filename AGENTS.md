@@ -53,13 +53,16 @@ curl -X DELETE "$DR_KIBANA_URL/api/spaces/space/$SPACE" \
 # test rule import
 export CUSTOM_RULES_DIR=./rules-test
 python -m detection_rules import-rules --space $SPACE -d $CUSTOM_RULES_DIR/rules \
-    --overwrite --overwrite-action-connectors --overwrite-exceptions
+    --overwrite --overwrite-action-connectors --overwrite-exceptions --overwrite-value-lists
+# optionally skip importing specific exception lists by name
+# python -m detection_rules import-rules --space $SPACE -d $CUSTOM_RULES_DIR/rules \
+#     --exclude-exceptions "Some List*"
 
 # test rule export
 python -m detection_rules export-rules --space $SPACE -d $CUSTOM_RULES_DIR/rules \
     -acd $CUSTOM_RULES_DIR/action_connectors -ed $CUSTOM_RULES_DIR/exceptions \
-    -vld $CUSTOM_RULES_DIR/value_lists -da SOC \
-    --export-action-connectors --export-exceptions --export-value-lists --strip-version
+    -vld $CUSTOM_RULES_DIR/value_lists -ttd $CUSTOM_RULES_DIR/timeline_templates -da SOC \
+    --export-action-connectors --export-exceptions --export-value-lists --export-timeline-templates --strip-version
 ```
 
 ## Genereal Information
