@@ -265,11 +265,18 @@ def kibana_import_rules(  # noqa: PLR0912, PLR0913, PLR0915
         error_exception_lists: list[str] = []
 
         for list_id, edicts in exception_list_map.items():
+            namespace_type = edicts[0].get("namespace_type", "single")
             try:
-                existing = ExceptionListResource.get(list_id)
+                existing = ExceptionListResource.get(list_id, namespace_type=namespace_type)
             except Exception as exc:  # noqa: BLE001
                 error_exception_lists.append(f"{list_id}: {exc}")
                 continue
+            if existing:
+                edicts[0]["id"] = existing["id"]
+                for rd in rule_dicts:
+                    for exc in rd.get("exceptions_list", []):
+                        if exc.get("list_id") == list_id:
+                            exc["id"] = existing["id"]
             # decide whether to skip or overwrite existing exception lists
             if existing and not overwrite_exceptions:
                 skipped_exception_lists.append(list_id)
@@ -379,55 +386,55 @@ def kibana_import_rules(  # noqa: PLR0912, PLR0913, PLR0915
         click.echo(f" - {rule_str}")
     if response["errors"]:
         _handle_response_errors(response)  # type: ignore[reportUnknownArgumentType]
-    else:
-        _process_imported_items(exception_dicts, "exception list(s)", "list_id")
-        _process_imported_items(action_connectors_dicts, "action connector(s)", "id")
-        if excluded_exception_lists:
-            click.echo("Exception lists excluded from import:")
-            ids_str = "\n - ".join(excluded_exception_lists)
-            click.echo(f" - {ids_str}")
-        if skipped_exception_lists:
-            click.echo("Exception lists already exist and were not overwritten:")
-            ids_str = "\n - ".join(skipped_exception_lists)
-            click.echo(f" - {ids_str}")
-        if error_exception_lists:
-            click.echo("Errors occurred during exception list processing:")
-            ids_str = "\n - ".join(error_exception_lists)
-            click.echo(f" - {ids_str}")
-        if imported_value_lists:
-            click.echo(f"{len(imported_value_lists)} value list(s) successfully imported")
-            ids_str = "\n - ".join(imported_value_lists)
-            click.echo(f" - {ids_str}")
-        if skipped_value_lists:
-            click.echo("Value lists already exist and were not overwritten:")
-            ids_str = "\n - ".join(skipped_value_lists)
-            click.echo(f" - {ids_str}")
-        if missing_value_lists:
-            click.echo("Value list files not found:")
-            ids_str = "\n - ".join(missing_value_lists)
-            click.echo(f" - {ids_str}")
-        if error_value_lists:
-            click.echo("Errors occurred during value list processing:")
-            ids_str = "\n - ".join(error_value_lists)
-            click.echo(f" - {ids_str}")
-        if imported_timeline_templates:
-            click.echo(
-                f"{len(imported_timeline_templates)} timeline template(s) successfully imported"
-            )
-            ids_str = "\n - ".join(imported_timeline_templates)
-            click.echo(f" - {ids_str}")
-        if skipped_timeline_templates:
-            click.echo("Timeline templates already exist and were not overwritten:")
-            ids_str = "\n - ".join(skipped_timeline_templates)
-            click.echo(f" - {ids_str}")
-        if missing_timeline_templates:
-            click.echo("Timeline template files not found:")
-            ids_str = "\n - ".join(missing_timeline_templates)
-            click.echo(f" - {ids_str}")
-        if error_timeline_templates:
-            click.echo("Errors occurred during timeline template processing:")
-            ids_str = "\n - ".join(error_timeline_templates)
-            click.echo(f" - {ids_str}")
+
+    _process_imported_items(exception_dicts, "exception list(s)", "list_id")
+    _process_imported_items(action_connectors_dicts, "action connector(s)", "id")
+    if excluded_exception_lists:
+        click.echo("Exception lists excluded from import:")
+        ids_str = "\n - ".join(excluded_exception_lists)
+        click.echo(f" - {ids_str}")
+    if skipped_exception_lists:
+        click.echo("Exception lists already exist and were not overwritten:")
+        ids_str = "\n - ".join(skipped_exception_lists)
+        click.echo(f" - {ids_str}")
+    if error_exception_lists:
+        click.echo("Errors occurred during exception list processing:")
+        ids_str = "\n - ".join(error_exception_lists)
+        click.echo(f" - {ids_str}")
+    if imported_value_lists:
+        click.echo(f"{len(imported_value_lists)} value list(s) successfully imported")
+        ids_str = "\n - ".join(imported_value_lists)
+        click.echo(f" - {ids_str}")
+    if skipped_value_lists:
+        click.echo("Value lists already exist and were not overwritten:")
+        ids_str = "\n - ".join(skipped_value_lists)
+        click.echo(f" - {ids_str}")
+    if missing_value_lists:
+        click.echo("Value list files not found:")
+        ids_str = "\n - ".join(missing_value_lists)
+        click.echo(f" - {ids_str}")
+    if error_value_lists:
+        click.echo("Errors occurred during value list processing:")
+        ids_str = "\n - ".join(error_value_lists)
+        click.echo(f" - {ids_str}")
+    if imported_timeline_templates:
+        click.echo(
+            f"{len(imported_timeline_templates)} timeline template(s) successfully imported"
+        )
+        ids_str = "\n - ".join(imported_timeline_templates)
+        click.echo(f" - {ids_str}")
+    if skipped_timeline_templates:
+        click.echo("Timeline templates already exist and were not overwritten:")
+        ids_str = "\n - ".join(skipped_timeline_templates)
+        click.echo(f" - {ids_str}")
+    if missing_timeline_templates:
+        click.echo("Timeline template files not found:")
+        ids_str = "\n - ".join(missing_timeline_templates)
+        click.echo(f" - {ids_str}")
+    if error_timeline_templates:
+        click.echo("Errors occurred during timeline template processing:")
+        ids_str = "\n - ".join(error_timeline_templates)
+        click.echo(f" - {ids_str}")
 
     return response, results  # type: ignore[reportUnknownVariableType]
 

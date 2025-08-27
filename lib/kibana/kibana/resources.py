@@ -289,12 +289,12 @@ class ExceptionListResource(BaseResource):
     def get(cls, list_id: str, namespace_type: str = "single") -> dict | None:
         """Retrieve an exception list by ``list_id``."""
         params = {"list_id": list_id, "namespace_type": namespace_type}
-        try:
-            return Kibana.current().get(cls.BASE_URI, params=params)
-        except requests.HTTPError as exc:
-            if exc.response is not None and exc.response.status_code == 404:
-                return None
-            raise
+        response = Kibana.current().get(cls.BASE_URI, params=params, error=False, raw=True)
+        if response.status_code == 404:
+            return None
+        if response.status_code != 200:
+            raise RuntimeError(f"{response.status_code}: {response.text}")
+        return response.json()
 
     @classmethod
     def delete(cls, list_id: str, namespace_type: str = "single") -> None:
@@ -311,12 +311,12 @@ class ValueListResource(BaseResource):
     @classmethod
     def get(cls, list_id: str) -> dict | None:
         """Retrieve a value list by ID."""
-        try:
-            return Kibana.current().get(cls.BASE_URI, params={"id": list_id})
-        except requests.HTTPError as exc:
-            if exc.response is not None and exc.response.status_code == 404:
-                return None
-            raise
+        response = Kibana.current().get(cls.BASE_URI, params={"id": list_id}, error=False, raw=True)
+        if response.status_code == 404:
+            return None
+        if response.status_code != 200:
+            raise RuntimeError(f"{response.status_code}: {response.text}")
+        return response.json()
 
     @classmethod
     def delete(cls, list_id: str) -> None:
@@ -410,15 +410,17 @@ class TimelineTemplateResource(BaseResource):
         """Retrieve a timeline template by its ``templateTimelineId``."""
 
         kibana = Kibana.current()
-        try:
-            response = kibana.get(
-                cls.BASE_URI, params={"template_timeline_id": timeline_id}
-            )
-        except requests.HTTPError as exc:
-            if exc.response is not None and exc.response.status_code == 404:
-                return None
-            raise
-        return response if isinstance(response, dict) else None
+        response = kibana.get(
+            cls.BASE_URI,
+            params={"template_timeline_id": timeline_id},
+            error=False,
+            raw=True,
+        )
+        if response.status_code == 404:
+            return None
+        if response.status_code != 200:
+            raise RuntimeError(f"{response.status_code}: {response.text}")
+        return response.json()
 
     @classmethod
     def resolve_saved_object_id(cls, timeline_id: str) -> str:
