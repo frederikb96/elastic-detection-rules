@@ -8,6 +8,7 @@ from typing import List, Optional, Type
 from uuid import uuid4
 
 import json
+import requests
 
 from .connector import Kibana
 from . import definitions
@@ -286,25 +287,20 @@ class ExceptionListResource(BaseResource):
 
     @classmethod
     def get(cls, list_id: str, namespace_type: str = "single") -> dict | None:
-        """Retrieve an exception list by ``list_id``.
-
-        The API returns ``status_code: 404`` in the body when a list is
-        missing, so return ``None`` to make existence checks straightforward.
-        """
+        """Retrieve an exception list by ``list_id``."""
         params = {"list_id": list_id, "namespace_type": namespace_type}
-        response = Kibana.current().get(cls.BASE_URI, params=params, error=False)
-        if not response:
-            return None
-        status_code = response.get("status_code") or response.get("statusCode")
-        if status_code == 404:
-            return None
-        return response
+        try:
+            return Kibana.current().get(cls.BASE_URI, params=params)
+        except requests.HTTPError as exc:
+            if exc.response is not None and exc.response.status_code == 404:
+                return None
+            raise
 
     @classmethod
     def delete(cls, list_id: str, namespace_type: str = "single") -> None:
         """Delete an exception list."""
         params = {"list_id": list_id, "namespace_type": namespace_type}
-        Kibana.current().delete(cls.BASE_URI, params=params, error=False)
+        Kibana.current().delete(cls.BASE_URI, params=params)
 
 
 class ValueListResource(BaseResource):
@@ -314,32 +310,32 @@ class ValueListResource(BaseResource):
 
     @classmethod
     def get(cls, list_id: str) -> dict | None:
-        """Retrieve a value list by ID.
-
-        The API returns a JSON body with ``status_code: 404`` when the list is
-        missing, even though ``error=False`` suppresses HTTP errors. In that
-        case return ``None`` so callers can treat the list as nonexistent.
-        """
-        response = Kibana.current().get(cls.BASE_URI, params={"id": list_id}, error=False)
-        if not response:
-            return None
-        status_code = response.get("status_code") or response.get("statusCode")
-        if status_code == 404:
-            return None
-        return response
+        """Retrieve a value list by ID."""
+        try:
+            return Kibana.current().get(cls.BASE_URI, params={"id": list_id})
+        except requests.HTTPError as exc:
+            if exc.response is not None and exc.response.status_code == 404:
+                return None
+            raise
 
     @classmethod
     def delete(cls, list_id: str) -> None:
         """Delete a value list by ID."""
-        Kibana.current().delete(cls.BASE_URI, params={"id": list_id}, error=False)
+        Kibana.current().delete(cls.BASE_URI, params={"id": list_id})
 
     @classmethod
     def create_index(cls) -> None:
         """Ensure the value list index exists."""
-        Kibana.current().post(f"{cls.BASE_URI}/index", error=False)
+        Kibana.current().post(f"{cls.BASE_URI}/index")
 
     @classmethod
-    def create(cls, list_id: str, list_type: str, name: str | None = None, description: str | None = None) -> dict:
+    def create(
+        cls,
+        list_id: str,
+        list_type: str,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> dict:
         """Create a value list."""
         payload = {
             "id": list_id,
@@ -379,6 +375,30 @@ class ValueListResource(BaseResource):
         )
         return response.text
 
+    @classmethod
+    def find_list_items(cls, list_id: str, per_page: int = 1000, cursor: str | None = None) -> dict:
+        """Retrieve items for a given value list."""
+        params: dict[str, str | int] = {"list_id": list_id, "per_page": per_page}
+        if cursor:
+            params["cursor"] = cursor
+        return Kibana.current().get(f"{cls.BASE_URI}/items/_find", params=params)
+
+    @classmethod
+    def delete_list_item(cls, item_id: str) -> dict:
+        """Delete a value list item by ID."""
+        Kibana.current().delete(f"{cls.BASE_URI}/items", params={"id": item_id})
+
+    @classmethod
+    def clear_list_items(cls, list_id: str) -> None:
+        """Remove all items from a value list."""
+        while True:
+            result = cls.find_list_items(list_id)
+            items = result.get("data", [])
+            if not items:
+                break
+            for item in items:
+                cls.delete_list_item(item["id"])
+
 
 class TimelineTemplateResource(BaseResource):
     """Resource for managing timeline templates."""
@@ -387,21 +407,17 @@ class TimelineTemplateResource(BaseResource):
 
     @classmethod
     def get(cls, timeline_id: str) -> dict | None:
-        """Retrieve a timeline template by its ``templateTimelineId``.
-
-        Returns ``None`` if the template cannot be found.  The response may
-        include a ``status_code`` field when an error occurs while still
-        returning HTTP 200, so those cases are treated as missing as well.
-        """
+        """Retrieve a timeline template by its ``templateTimelineId``."""
 
         kibana = Kibana.current()
-        response = kibana.get(
-            cls.BASE_URI,
-            params={"template_timeline_id": timeline_id},
-            error=False,
-        )
-        if isinstance(response, dict) and response.get("status_code") == 404:
-            return None
+        try:
+            response = kibana.get(
+                cls.BASE_URI, params={"template_timeline_id": timeline_id}
+            )
+        except requests.HTTPError as exc:
+            if exc.response is not None and exc.response.status_code == 404:
+                return None
+            raise
         return response if isinstance(response, dict) else None
 
     @classmethod
@@ -412,12 +428,7 @@ class TimelineTemplateResource(BaseResource):
         resolved = kibana.get(
             f"{cls.BASE_URI}/resolve",
             params={"template_timeline_id": timeline_id},
-            error=False,
         )
-        if isinstance(resolved, dict) and resolved.get("status_code"):
-            raise RuntimeError(
-                resolved.get("message", f"timeline {timeline_id} not found")
-            )
 
         saved_id = resolved.get("timeline", {}).get("savedObjectId")
         if not saved_id:
@@ -431,12 +442,8 @@ class TimelineTemplateResource(BaseResource):
 
         The ``timeline_id`` stored on rules corresponds to the template's
         ``templateTimelineId`` rather than the saved object ID required by the
-        export API.  The saved object ID is retrieved via
+        export API. The saved object ID is retrieved via
         :meth:`resolve_saved_object_id` before calling the export endpoint.
-
-        An error is raised if the export API returns an unexpected status code or
-        if the response payload contains a ``statusCode`` field (which Kibana uses
-        to report errors while still responding with HTTP 200).
         """
 
         kibana = Kibana.current()
@@ -448,23 +455,7 @@ class TimelineTemplateResource(BaseResource):
             params={"file_name": timeline_id},
             data={"ids": [saved_id]},
             raw=True,
-            error=False,
         )
-        if response.status_code != 200:
-            raise RuntimeError(
-                response.text
-                or f"unexpected status {response.status_code} for timeline {timeline_id}"
-            )
-
-        first_line = response.text.splitlines()[0] if response.text else ""
-        try:
-            payload = json.loads(first_line)
-        except json.JSONDecodeError:
-            payload = None
-
-        if isinstance(payload, dict) and payload.get("statusCode"):
-            raise RuntimeError(response.text)
-
         return response.text
 
     @classmethod
